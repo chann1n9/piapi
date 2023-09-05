@@ -7,7 +7,7 @@ from redis import StrictRedis, ConnectionPool
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from typing import Any, List, Union, Dict
-from pydantic import BaseModel
+from pydantic import UUID4, BaseModel
 from apscheduler.schedulers.background import BackgroundScheduler
 
 
@@ -121,13 +121,21 @@ class RedisConn:
     def get_job_metadata_dict(self, uuid) -> dict:
         return json.loads(self.get_job_metadata_raw(uuid))
 
-    def update_job_status(self) -> None:
+    def update_jobs_status(self) -> None:
         for uuid, job in self.get_jobs_to_inte_dict(retuuid=True, nometadata=True):
             pid = job['pid']
             if pid:
                 is_running = True if pid in (str(p.pid) for p in psutil.process_iter()) else False
                 if not is_running:
                     self.set_job_with_finish(uuid)
+
+    def update_job_status(self, uuid) -> None:
+        job = self.get_job_with_uuid(uuid)
+        pid = job['pid']
+        if pid:
+            is_running = True if pid in (str(p.pid) for p in psutil.process_iter()) else False
+            if not is_running:
+                self.set_job_with_finish(uuid)
 
 
 def job():
@@ -222,8 +230,7 @@ async def get_info(video_info: VideoInfo) -> VideoInfo:
 
     job_uuid = str(uuid.uuid4())
     
-    redisconn = RedisConn()
-    redisconn.set_job_with_ready(job_uuid=job_uuid, 
+    redis_conn.set_job_with_ready(job_uuid=job_uuid, 
                                  video_name=video_info.title, 
                                  url=video_info.url, 
                                  metadata=metadata)
@@ -268,10 +275,18 @@ async def download(video_job: VideoJobIn) -> Any:
 @app.get("/api/youget/listall/")
 async def list_all():
     redis_conn = RedisConn()
-    redis_conn.update_job_status()
+    redis_conn.update_jobs_status()
     return {uuid: job for uuid, job in redis_conn.get_jobs_to_inte_dict(
         retuuid=True, nometadata=True
     )}
+
+
+@app.get("/api/youget/list/{uuid}")
+async def list(uuid: Union[UUID4, None] = None):
+    redis_conn = RedisConn()
+    redis_conn.update_job_status(uuid)
+    job = redis_conn.get_job_with_uuid(uuid)
+    return {'jobs': {uuid: job}}
 
 
 @app.get("/")
